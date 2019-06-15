@@ -185,6 +185,7 @@ int main(int argc, char** argv)
     /* Call CUDA kernel from host */
     gettimeofday(&startTime, NULL);
     sumMatrixOnGPU2D<<<grid, block>>>(devMatA, devMatB, devMatC, matRow, matCol);
+    CHECK_CUDA_CALL(cudaDeviceSynchronize());
     gettimeofday(&endTime, NULL);
 
     printf("Execution configuration: <<<(%d, %d), (%d, %d)>>>\n",
@@ -194,7 +195,7 @@ int main(int argc, char** argv)
            ((double)startTime.tv_sec + (double)startTime.tv_usec * 1.0e-6));
 
     /* Check kernel error */
-    CHECK_CUDA_CALL(cudaDeviceSynchronize());
+    CHECK_CUDA_CALL(cudaGetLastError());
 
     /* Copy CUDA kernel result to host */
     CHECK_CUDA_CALL(cudaMemcpy(devResult, devMatC, numOfBytes, cudaMemcpyDeviceToHost));
