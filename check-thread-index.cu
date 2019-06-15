@@ -20,13 +20,19 @@
 
 void printMatrix(int* matC, int row, int col)
 {
+    int i;
+    int j;
+    int* pC = matC;
+
     printf("Matrix (%d, %d)\n", row, col);
 
-    for (int i = 0; i < row; ++i) {
-        for (int j = 0; j < col; ++j)
-            printf("%2d ", matC[i * col + j]);
+    for (i = 0; i < row; ++i) {
+        for (j = 0; j < col; ++j)
+            printf("%2d ", pC[j]);
 
         printf("\n");
+
+        pC += col;
     }
 
     printf("\n");
@@ -92,10 +98,10 @@ int main(int argc, char** argv)
     dim3 block(4, 2);
     dim3 grid((matCol + block.x - 1) / block.x, (matRow + block.y - 1) / block.y);
 
-    /* Transfer vector data from host */
+    /* Transfer matrix data from host */
     CHECK_CUDA_CALL(cudaMemcpy(devMatA, hostMatA, numOfBytes, cudaMemcpyHostToDevice));
 
-    /* Call CUDA kernel from host */
+    /* Call kernel from host */
     printThreadIndex<<<grid, block>>>(devMatA, matRow, matCol);
     CHECK_CUDA_CALL(cudaDeviceSynchronize());
 
