@@ -179,7 +179,7 @@ int main(int argc, char** argv)
     /* Set execution configuration */
     blockRow = 32;
     blockCol = 32;
-    dim3 block(blockRow, blockCol);
+    dim3 block(blockCol, blockRow);
     dim3 grid((matCol + block.x - 1) / block.x, (matRow + block.y - 1) / block.y);
     
     /* Call CUDA kernel from host */
