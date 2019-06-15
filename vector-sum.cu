@@ -6,17 +6,21 @@
 #include <math.h>
 #include <cuda_runtime.h>
 
-void printCudaError(cudaError_t error, const char* file, const int line)
-{
-    fprintf(stderr, "Error (%s:%d), code: %d, reason: %s\n",
-            file, line, error, cudaGetErrorString(error));
-
-    return;
-}
+#define CHECK_CUDA_CALL(call) \
+    { \
+        const cudaError_t error = call; \
+        \
+        if (error != cudaSuccess) { \
+            fprintf(stderr, "Error (%s:%d), code: %d, reason: %s\n", \
+                    __FILE__, __LINE__, \
+                    error, cudaGetErrorString(error)); \
+                exit(EXIT_FAILURE); \
+        } \
+    }
 
 void checkResult(float* hostResult, float* devResult, int vecSize)
 {
-    const double epsilon = 1.0E-8;
+    const double epsilon = 1.0e-8;
 
     int i;
     
@@ -43,7 +47,7 @@ void initializeVector(float* vec, int vecSize)
     for (i = 0; i < vecSize; ++i)
         vec[i] = (float)(rand() & 0xFF) / 10.0f;
 
-   return;
+    return;
 }
 
 void sumVectorsOnHost(float* vecA, float* vecB, float* vecC, int vecSize)
@@ -52,6 +56,8 @@ void sumVectorsOnHost(float* vecA, float* vecB, float* vecC, int vecSize)
 
     for (i = 0; i < vecSize; ++i)
         vecC[i] = vecA[i] + vecB[i];
+
+    return;
 }
 
 __global__ void sumVectorsOnGPU(float* vecA, float* vecB, float* vecC)
@@ -70,14 +76,14 @@ int main(int argc, char** argv)
     float* hostVecA;
     float* hostVecB;
     float* hostVecC;
-    float* gpuVecA;
-    float* gpuVecB;
-    float* gpuVecC;
-    float* gpuResult;
+    float* devVecA;
+    float* devVecB;
+    float* devVecC;
+    float* devResult;
     
     /* Setup device */
     dev = 0;
-    cudaSetDevice(dev);
+    CHECK_CUDA_CALL(cudaSetDevice(dev));
     
     /* Set vector size */
     numOfElements = 32;
@@ -88,50 +94,56 @@ int main(int argc, char** argv)
     hostVecA = (float*)calloc(numOfElements, sizeof(float));
     hostVecB = (float*)calloc(numOfElements, sizeof(float));
     hostVecC = (float*)calloc(numOfElements, sizeof(float));
-    gpuResult = (float*)calloc(numOfElements, sizeof(float));
+    devResult = (float*)calloc(numOfElements, sizeof(float));
     
     /* Initialize vectors */
     initializeVector(hostVecA, numOfElements);
     initializeVector(hostVecB, numOfElements);
     
     /* Allocate device memory */
-    cudaMalloc((float**)&gpuVecA, numOfBytes);
-    cudaMalloc((float**)&gpuVecB, numOfBytes);
-    cudaMalloc((float**)&gpuVecC, numOfBytes);
+    CHECK_CUDA_CALL(cudaMalloc((float**)&devVecA, numOfBytes));
+    CHECK_CUDA_CALL(cudaMalloc((float**)&devVecB, numOfBytes));
+    CHECK_CUDA_CALL(cudaMalloc((float**)&devVecC, numOfBytes));
 
     /* Transfer vector data from host to device */
-    cudaMemcpy(gpuVecA, hostVecA, numOfBytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(gpuVecB, hostVecB, numOfBytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(gpuVecC, gpuResult, numOfBytes, cudaMemcpyHostToDevice);
+    CHECK_CUDA_CALL(cudaMemcpy(devVecA, hostVecA, numOfBytes, cudaMemcpyHostToDevice));
+    CHECK_CUDA_CALL(cudaMemcpy(devVecB, hostVecB, numOfBytes, cudaMemcpyHostToDevice));
+    CHECK_CUDA_CALL(cudaMemcpy(devVecC, devResult, numOfBytes, cudaMemcpyHostToDevice));
 
-    /* Call CUDA kernel from host */
+    /* Call kernel from host */
     dim3 block(numOfElements);
     dim3 grid(1);
 
-    sumVectorsOnGPU<<<grid, block>>>(gpuVecA, gpuVecB, gpuVecC);
+    sumVectorsOnGPU<<<grid, block>>>(devVecA, devVecB, devVecC);
+    CHECK_CUDA_CALL(cudaDeviceSynchronize());
+
     printf("Execution configuration: <<<%d, %d>>>\n", grid.x, block.x);
 
-    /* Copy CUDA kernel result to host */
-    cudaMemcpy(gpuResult, gpuVecC, numOfBytes, cudaMemcpyDeviceToHost);
+    /* Check kernel error */
+    CHECK_CUDA_CALL(cudaGetLastError());
+
+    /* Copy kernel result to host */
+    CHECK_CUDA_CALL(cudaMemcpy(devResult, devVecC, numOfBytes, cudaMemcpyDeviceToHost));
 
     /* Add vectors in host to check device result */
     sumVectorsOnHost(hostVecA, hostVecB, hostVecC, numOfElements);
 
     /* Check device result */
-    checkResult(hostVecC, gpuResult, numOfElements);
+    checkResult(hostVecC, devResult, numOfElements);
 
     /* Free device global memory */
-    cudaFree(gpuVecA);
-    cudaFree(gpuVecB);
-    cudaFree(gpuVecC);
+    CHECK_CUDA_CALL(cudaFree(devVecA));
+    CHECK_CUDA_CALL(cudaFree(devVecB));
+    CHECK_CUDA_CALL(cudaFree(devVecC));
 
     /* Free host memory */
     free(hostVecA);
     free(hostVecB);
     free(hostVecC);
-    free(gpuResult);
-
-    cudaDeviceReset();
+    free(devResult);
+    
+    /* Reset device */
+    CHECK_CUDA_CALL(cudaDeviceReset());
 
     return EXIT_SUCCESS;
 }

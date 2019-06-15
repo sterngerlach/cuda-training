@@ -7,23 +7,21 @@
 #include <sys/time.h>
 #include <cuda_runtime.h>
 
-void printCudaError(cudaError_t error, const char* file, const int line)
-{
-    fprintf(stderr, "Error (%s:%d), code: %d, reason: %s\n",
-            file, line, error, cudaGetErrorString(error));
-
-    return;
-}
-
-void printCudaErrorAndExit(cudaError_t error, const char* file, const int line)
-{
-    printCudaError(error, file, line);
-    exit(EXIT_FAILURE);
-}
+#define CHECK_CUDA_CALL(call) \
+    { \
+        const cudaError_t error = call; \
+        \
+        if (error != cudaSuccess) { \
+            fprintf(stderr, "Error (%s:%d), code: %d, reason: %s\n", \
+                    __FILE__, __LINE__, \
+                    error, cudaGetErrorString(error)); \
+                exit(EXIT_FAILURE); \
+        } \
+    }
 
 void checkResult(float* hostResult, float* devResult, int vecSize)
 {
-    const double epsilon = 1.0E-8;
+    const double epsilon = 1.0e-8;
 
     int i;
     
@@ -50,7 +48,7 @@ void initializeVector(float* vec, int vecSize)
     for (i = 0; i < vecSize; ++i)
         vec[i] = (float)(rand() & 0xFF) / 10.0f;
 
-   return;
+    return;
 }
 
 void sumVectorsOnHost(float* vecA, float* vecB, float* vecC, int vecSize)
@@ -59,6 +57,8 @@ void sumVectorsOnHost(float* vecA, float* vecB, float* vecC, int vecSize)
 
     for (i = 0; i < vecSize; ++i)
         vecC[i] = vecA[i] + vecB[i];
+
+    return;
 }
 
 __global__ void sumVectorsOnGPU(float* vecA, float* vecB, float* vecC, int vecSize)
@@ -73,32 +73,28 @@ int main(int argc, char** argv)
 {
     int dev;
     cudaDeviceProp deviceProp;
-    cudaError_t error;
 
     int numOfElements;
     size_t numOfBytes;
     
-    struct timeval startTime;
-    struct timeval endTime;
-
     float* hostVecA;
     float* hostVecB;
     float* hostVecC;
-    float* gpuVecA;
-    float* gpuVecB;
-    float* gpuVecC;
-    float* gpuResult;
-    
+    float* devVecA;
+    float* devVecB;
+    float* devVecC;
+    float* devResult;
+
+    struct timeval startTime;
+    struct timeval endTime;
+
     /* Setup device */
     dev = 0;
 
-    if ((error = cudaGetDeviceProperties(&deviceProp, dev)) != cudaSuccess)
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
-    
+    CHECK_CUDA_CALL(cudaGetDeviceProperties(&deviceProp, dev));
     printf("Using device %d: %s\n", dev, deviceProp.name);
 
-    if ((error = cudaSetDevice(dev)) != cudaSuccess)
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
+    CHECK_CUDA_CALL(cudaSetDevice(dev));
     
     /* Set vector size */
     numOfElements = 1 << 24;
@@ -109,90 +105,67 @@ int main(int argc, char** argv)
     hostVecA = (float*)calloc(numOfElements, sizeof(float));
     hostVecB = (float*)calloc(numOfElements, sizeof(float));
     hostVecC = (float*)calloc(numOfElements, sizeof(float));
-    gpuResult = (float*)calloc(numOfElements, sizeof(float));
+    devResult = (float*)calloc(numOfElements, sizeof(float));
     
     /* Initialize vectors */
     initializeVector(hostVecA, numOfElements);
     initializeVector(hostVecB, numOfElements);
     
     /* Allocate device memory */
-    if ((error = cudaMalloc((float**)&gpuVecA, numOfBytes)) != cudaSuccess)
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
-
-    if ((error = cudaMalloc((float**)&gpuVecB, numOfBytes)) != cudaSuccess)
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
-
-    if ((error = cudaMalloc((float**)&gpuVecC, numOfBytes)) != cudaSuccess)
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
+    CHECK_CUDA_CALL(cudaMalloc((float**)&devVecA, numOfBytes));
+    CHECK_CUDA_CALL(cudaMalloc((float**)&devVecB, numOfBytes));
+    CHECK_CUDA_CALL(cudaMalloc((float**)&devVecC, numOfBytes));
 
     /* Transfer vector data from host to device */
-    if ((error = cudaMemcpy(gpuVecA, hostVecA,
-                            numOfBytes, cudaMemcpyHostToDevice)) != cudaSuccess)
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
+    CHECK_CUDA_CALL(cudaMemcpy(devVecA, hostVecA, numOfBytes, cudaMemcpyHostToDevice));
+    CHECK_CUDA_CALL(cudaMemcpy(devVecB, hostVecB, numOfBytes, cudaMemcpyHostToDevice));
+    CHECK_CUDA_CALL(cudaMemcpy(devVecC, devResult, numOfBytes, cudaMemcpyHostToDevice));
 
-    if ((error = cudaMemcpy(gpuVecB, hostVecB,
-                            numOfBytes, cudaMemcpyHostToDevice)) != cudaSuccess)
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
-
-    if ((error = cudaMemcpy(gpuVecC, gpuResult,
-                            numOfBytes, cudaMemcpyHostToDevice)) != cudaSuccess)
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
-
-    /* Call CUDA kernel from host */
+    /* Call kernel from host */
     dim3 block(1024);
     dim3 grid((numOfElements + block.x - 1) / block.x);
     
     gettimeofday(&startTime, NULL);
-    sumVectorsOnGPU<<<grid, block>>>(gpuVecA, gpuVecB, gpuVecC, numOfElements);
-    
-    if ((error = cudaDeviceSynchronize()) != cudaSuccess)
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
-
+    sumVectorsOnGPU<<<grid, block>>>(devVecA, devVecB, devVecC, numOfElements);
+    CHECK_CUDA_CALL(cudaDeviceSynchronize());
     gettimeofday(&endTime, NULL);
 
     printf("Execution configuration: <<<%d, %d>>>\n", grid.x, block.x);
-    printf("GPU execution time: %.4f\n",
+    printf("GPU execution time: %.6f\n",
            ((double)endTime.tv_sec + (double)endTime.tv_usec * 1.0e-6) -
            ((double)startTime.tv_sec + (double)startTime.tv_usec * 1.0e-6));
 
     /* Check kernel error */
-    if ((error = cudaGetLastError()) != cudaSuccess)
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
+    CHECK_CUDA_CALL(cudaGetLastError());
 
     /* Copy CUDA kernel result to host */
-    if ((error = cudaMemcpy(gpuResult, gpuVecC,
-                            numOfBytes, cudaMemcpyDeviceToHost)) != cudaSuccess)
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
+    CHECK_CUDA_CALL(cudaMemcpy(devResult, devVecC, numOfBytes, cudaMemcpyDeviceToHost));
 
     /* Add vectors in host to check device result */
     gettimeofday(&startTime, NULL);
     sumVectorsOnHost(hostVecA, hostVecB, hostVecC, numOfElements);
     gettimeofday(&endTime, NULL);
 
-    printf("Host execution time: %.4f\n",
+    printf("Host execution time: %.6f\n",
            ((double)endTime.tv_sec + (double)endTime.tv_usec * 1.0e-6) -
            ((double)startTime.tv_sec + (double)startTime.tv_usec * 1.0e-6));
 
     /* Check device result */
-    checkResult(hostVecC, gpuResult, numOfElements);
+    checkResult(hostVecC, devResult, numOfElements);
 
     /* Free device global memory */
-    if ((error = cudaFree(gpuVecA)))
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
-
-    if ((error = cudaFree(gpuVecB)))
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
-
-    if ((error = cudaFree(gpuVecC)))
-        printCudaErrorAndExit(error, __FILE__, __LINE__);
+    CHECK_CUDA_CALL(cudaFree(devVecA));
+    CHECK_CUDA_CALL(cudaFree(devVecB));
+    CHECK_CUDA_CALL(cudaFree(devVecC));
 
     /* Free host memory */
     free(hostVecA);
     free(hostVecB);
     free(hostVecC);
-    free(gpuResult);
+    free(devResult);
 
-    cudaDeviceReset();
+    /* Reset device */
+    CHECK_CUDA_CALL(cudaDeviceReset());
 
     return EXIT_SUCCESS;
 }
