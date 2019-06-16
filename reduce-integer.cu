@@ -15,6 +15,8 @@
  * su
  * nvprof --metrics inst_per_warp bin/reduce-integer
  * nvprof --metrics gld_throughput bin/reduce-integer
+ * nvprof --metrics gld_efficiency bin/reduce-integer
+ * nvprof --metrics gst_efficiency bin/reduce-integer
  * nvprof --metrics dram_read_throughput bin/reduce-integer
  * nvprof --metrics stall_sync bin/reduce-integer
  */
